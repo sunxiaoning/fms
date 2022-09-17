@@ -1,13 +1,13 @@
 use std::fmt::Debug;
 
-struct Transition<S: PartialEq+Clone,E: PartialEq> {
+struct Transition<S: PartialEq + Clone, E: PartialEq> {
     source: State<S>,
     target: State<S>,
     event: Event<E>,
     // action: fn() ,
 }
 
-impl<S: PartialEq+Clone, E: PartialEq> Transition<S,E> {
+impl<S: PartialEq + Clone, E: PartialEq> Transition<S, E> {
     fn transit(&self) -> Result<bool, &str> {
         Ok(true)
     }
@@ -31,49 +31,48 @@ impl<E: PartialEq> PartialEq for Event<E> {
     }
 }
 
-impl<E:PartialEq> Event<E> {
+impl<E: PartialEq> Event<E> {
     fn build(id: E) -> Self {
         Event { id }
     }
 }
 
-
 #[derive(Debug)]
-struct State<S: PartialEq+Clone> {
+struct State<S: PartialEq + Clone> {
     id: S,
 }
 
-
-impl<S: PartialEq+Clone> State<S> {
-
+impl<S: PartialEq + Clone> State<S> {
     fn build(id: S) -> Self {
         State { id }
     }
 }
 
-impl<S:PartialEq+Clone> PartialEq for State<S> {
+impl<S: PartialEq + Clone> PartialEq for State<S> {
     fn eq(&self, other: &State<S>) -> bool {
         self.id == other.id
     }
 }
 
-impl<S:PartialEq+Clone> Clone for State<S> {
+impl<S: PartialEq + Clone> Clone for State<S> {
     fn clone(&self) -> Self {
-       State { id: self.id.clone()}
+        State {
+            id: self.id.clone(),
+        }
     }
 }
 
-struct StateMachine<S: PartialEq+Debug+Clone,E:PartialEq+Debug> {
+struct StateMachine<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
     init: State<S>,
     end: State<S>,
     current: State<S>,
     err: Option<String>,
-    trans: Vec<Transition<S,E>>,
+    trans: Vec<Transition<S, E>>,
 }
 
-impl<'a,S: PartialEq+Debug+Clone,E:PartialEq+Debug> StateMachine<S,E> {
+impl<'a, S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachine<S, E> {
     fn is_running(&self) -> bool {
-        return !self.current.eq(&self.end)
+        return !self.current.eq(&self.end);
     }
 
     fn has_err(&self) -> bool {
@@ -83,7 +82,7 @@ impl<'a,S: PartialEq+Debug+Clone,E:PartialEq+Debug> StateMachine<S,E> {
         }
     }
 
-    fn get_state(&self) ->&State<S> {
+    fn get_state(&self) -> &State<S> {
         &self.current
     }
 
@@ -101,7 +100,7 @@ impl<'a,S: PartialEq+Debug+Clone,E:PartialEq+Debug> StateMachine<S,E> {
         for trans in self.trans.iter() {
             if trans.source.eq(&self.current) && trans.event.eq(e) {
                 let mut err_msg = None;
-                rs = trans.transit().unwrap_or_else(|err|  {
+                rs = trans.transit().unwrap_or_else(|err| {
                     eprintln!(
                         "state machine trans: source: {:?}, event: {:?}, err: {}",
                         trans.source.id, e.id, err
@@ -121,7 +120,7 @@ impl<'a,S: PartialEq+Debug+Clone,E:PartialEq+Debug> StateMachine<S,E> {
         rs
     }
 
-    fn build(init: State<S>, end: State<S>, trans: Vec<Transition<S,E>>) -> StateMachine<S, E> {
+    fn build(init: State<S>, end: State<S>, trans: Vec<Transition<S, E>>) -> StateMachine<S, E> {
         let sm = StateMachine {
             init: init.clone(),
             end,
@@ -131,30 +130,28 @@ impl<'a,S: PartialEq+Debug+Clone,E:PartialEq+Debug> StateMachine<S,E> {
         };
         sm
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    
-    #[derive(PartialEq,Debug,Clone)]
-enum OrderState {
+    #[derive(PartialEq, Debug, Clone)]
+    enum OrderState {
         I,
         P,
         S,
-        F
+        F,
     }
 
-    #[derive(PartialEq,Debug)]
+    #[derive(PartialEq, Debug)]
     enum OrderEvent {
         Submit,
         Payment,
-        Timeout
+        Timeout,
     }
 
-    fn init_sm<S,E>() -> StateMachine<OrderState,OrderEvent> {
+    fn init_sm<S, E>() -> StateMachine<OrderState, OrderEvent> {
         let si = State::build(OrderState::I);
         let sp = State::build(OrderState::P);
         let ss = State::build(OrderState::S);
@@ -177,7 +174,7 @@ enum OrderState {
 
     #[test]
     fn build() {
-        let sm: StateMachine<OrderState, OrderEvent> = init_sm::<OrderState,OrderEvent>();
+        let sm: StateMachine<OrderState, OrderEvent> = init_sm::<OrderState, OrderEvent>();
         let si = State::build(OrderState::I);
         assert!(sm.init.eq(&si));
         assert!(sm.current.eq(&si));
@@ -186,26 +183,25 @@ enum OrderState {
 
     #[test]
     fn send_event_normal() {
-        let mut sm = init_sm::<OrderState,OrderEvent>();
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Submit)),true);
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Submit)),false);
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Payment)),true);
+        let mut sm = init_sm::<OrderState, OrderEvent>();
+        assert_eq!(sm.send_event(&Event::build(OrderEvent::Submit)), true);
+        assert_eq!(sm.send_event(&Event::build(OrderEvent::Submit)), false);
+        assert_eq!(sm.send_event(&Event::build(OrderEvent::Payment)), true);
         assert_eq!(sm.is_running(), false);
-        assert_eq!(sm.get_state(),&State::build(OrderState::S));
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Payment)),false);
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Timeout)),false);
+        assert_eq!(sm.get_state(), &State::build(OrderState::S));
+        assert_eq!(sm.send_event(&Event::build(OrderEvent::Payment)), false);
+        assert_eq!(sm.send_event(&Event::build(OrderEvent::Timeout)), false);
     }
 
     #[test]
     fn send_event_timeout() {
-        let mut sm = init_sm::<OrderState,OrderEvent>();
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Submit)),true);
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Submit)),false);
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Timeout)),true);
+        let mut sm = init_sm::<OrderState, OrderEvent>();
+        assert_eq!(sm.send_event(&Event::build(OrderEvent::Submit)), true);
+        assert_eq!(sm.send_event(&Event::build(OrderEvent::Submit)), false);
+        assert_eq!(sm.send_event(&Event::build(OrderEvent::Timeout)), true);
         assert_eq!(sm.is_running(), true);
-        assert_eq!(sm.get_state(),&State::build(OrderState::F));
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Timeout)),false);
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Payment)),false);
-
+        assert_eq!(sm.get_state(), &State::build(OrderState::F));
+        assert_eq!(sm.send_event(&Event::build(OrderEvent::Timeout)), false);
+        assert_eq!(sm.send_event(&Event::build(OrderEvent::Payment)), false);
     }
 }
