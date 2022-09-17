@@ -1,5 +1,40 @@
 use std::fmt::Debug;
 
+struct TransitionBuilder<S: PartialEq + Clone, E: PartialEq> {
+    source: Option<State<S>>,
+    target: Option<State<S>>,
+    event: Option<Event<E>>,
+}
+
+impl<S: PartialEq + Clone, E: PartialEq> TransitionBuilder<S, E> {
+    fn build(&mut self) -> Transition<S, E> {
+        Transition::new(
+            self.source.take().expect("source state absent!"),
+            self.target.take().expect("target state absent!"),
+            self.event.take().expect("event absent"),
+        )
+    }
+    fn event(&mut self, event: Event<E>) -> &mut Self {
+        self.event = Some(event);
+        self
+    }
+    fn target(&mut self, target: State<S>) -> &mut Self {
+        self.target = Some(target);
+        self
+    }
+    fn source(&mut self, source: State<S>) -> &mut Self {
+        self.source = Some(source);
+        self
+    }
+    fn new() -> Self {
+        TransitionBuilder {
+            source: None,
+            target: None,
+            event: None,
+        }
+    }
+}
+
 struct Transition<S: PartialEq + Clone, E: PartialEq> {
     source: State<S>,
     target: State<S>,
@@ -12,7 +47,7 @@ impl<S: PartialEq + Clone, E: PartialEq> Transition<S, E> {
         Ok(true)
     }
 
-    fn build(source: State<S>, target: State<S>, event: Event<E>) -> Self {
+    fn new(source: State<S>, target: State<S>, event: Event<E>) -> Self {
         Transition {
             source,
             target,
@@ -58,6 +93,82 @@ impl<S: PartialEq + Clone> Clone for State<S> {
     fn clone(&self) -> Self {
         State {
             id: self.id.clone(),
+        }
+    }
+}
+
+struct StateMachineBuilder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+    init: Option<State<S>>,
+    end: Option<State<S>>,
+    trans: Option<Vec<Transition<S, E>>>,
+    trans_builder: Option<TransitionBuilder<S, E>>,
+}
+
+impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachineBuilder<S, E> {
+    fn event(&mut self, event: Event<E>) -> &mut StateMachineBuilder<S, E> {
+        let tranb = self.trans_builder.as_mut().expect("trans builder absent");
+        tranb.source.as_ref().expect("source absent");
+        tranb.source.as_ref().expect("target absent");
+
+        tranb.event(event);
+        self.trans
+            .as_mut()
+            .expect("trans absent!")
+            .push(tranb.build());
+        self
+    }
+    fn target(&mut self, target: State<S>) -> &mut StateMachineBuilder<S, E> {
+        let tranb = self.trans_builder.as_mut().expect("trans builder absent");
+        tranb.source.as_ref().expect("source absent");
+        tranb.target(target);
+        self
+    }
+
+    fn source(&mut self, source: State<S>) -> &mut StateMachineBuilder<S, E> {
+        self.trans_builder
+            .as_mut()
+            .expect("trans builder absent")
+            .source(source);
+        self
+    }
+
+    fn trans(&mut self) -> &mut StateMachineBuilder<S, E> {
+        self.init.as_ref().expect("init absent!");
+        if let None = self.trans {
+            self.trans = Some(vec![])
+        }
+        self.init.as_ref().expect("init absent!");
+        self.init.as_ref().expect("end absent!");
+        self.trans_builder = Some(TransitionBuilder::new());
+        self
+    }
+
+    fn init(&mut self, init: State<S>) -> &mut StateMachineBuilder<S, E> {
+        self.init = Some(init);
+        self
+    }
+
+    fn end(&mut self, end: State<S>) -> &mut StateMachineBuilder<S, E> {
+        self.init.as_ref().expect("init absent!");
+        assert!(self.trans.as_ref().expect("trans absent!").len() > 0);
+        self.end = Some(end);
+        self
+    }
+
+    fn build(&mut self) -> StateMachine<S, E> {
+        StateMachine::new(
+            self.init.take().expect("init state absent!"),
+            self.end.take().expect("end state absent!"),
+            self.trans.take().expect("trans absent!"),
+        )
+    }
+
+    fn new() -> Self {
+        StateMachineBuilder {
+            init: None,
+            end: None,
+            trans: None,
+            trans_builder: None,
         }
     }
 }
@@ -119,16 +230,14 @@ impl<'a, S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachine<S, E> 
         println!("statemachine event: {:?} not accept!", e.id);
         rs
     }
-
-    fn build(init: State<S>, end: State<S>, trans: Vec<Transition<S, E>>) -> StateMachine<S, E> {
-        let sm = StateMachine {
+    fn new(init: State<S>, end: State<S>, trans: Vec<Transition<S, E>>) -> StateMachine<S, E> {
+        StateMachine {
             init: init.clone(),
-            end,
+            end: end,
             current: init,
-            trans,
             err: None,
-        };
-        sm
+            trans: trans,
+        }
     }
 }
 
@@ -152,24 +261,22 @@ mod tests {
     }
 
     fn init_sm<S, E>() -> StateMachine<OrderState, OrderEvent> {
-        let si = State::build(OrderState::I);
-        let sp = State::build(OrderState::P);
-        let ss = State::build(OrderState::S);
-        let sf = State::build(OrderState::F);
-
-        let es = Event::build(OrderEvent::Submit);
-        let ep = Event::build(OrderEvent::Payment);
-        let et = Event::build(OrderEvent::Timeout);
-
-        StateMachine::build(
-            si.clone(),
-            ss.clone(),
-            vec![
-                Transition::build(si, sp.clone(), es),
-                Transition::build(sp.clone(), ss, ep),
-                Transition::build(sp, sf, et),
-            ],
-        )
+        StateMachineBuilder::new()
+            .init(State::build(OrderState::I))
+            .trans()
+            .source(State::build(OrderState::I))
+            .target(State::build(OrderState::P))
+            .event(Event::build(OrderEvent::Submit))
+            .trans()
+            .source(State::build(OrderState::P))
+            .target(State::build(OrderState::S))
+            .event(Event::build(OrderEvent::Payment))
+            .trans()
+            .source(State::build(OrderState::P))
+            .target(State::build(OrderState::F))
+            .event(Event::build(OrderEvent::Timeout))
+            .end(State::build(OrderState::S))
+            .build()
     }
 
     #[test]
