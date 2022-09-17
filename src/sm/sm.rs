@@ -104,50 +104,33 @@ struct StateMachineBuilder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
     trans_builder: Option<TransitionBuilder<S, E>>,
 }
 
+trait SmBuilder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+    fn init(self: Box<Self>, init: State<S>) -> Box<dyn TransStarter<S, E>>;
+}
+
+
+
+trait TransStarter<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+    fn trans_start(self: Box<Self>) -> Box<dyn Init<S, E>>;
+}
+
+trait Init<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+    fn source(self: Box<Self>, source: State<S>) -> Box<dyn Source<S, E>>;
+}
+
+trait Source<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+    fn target(self: Box<Self>, target: State<S>) -> Box<dyn Target<S, E>>;
+}
+
+trait Target<S: PartialEq + Debug + Debug + Clone, E: PartialEq + Debug> {
+    fn event(self: Box<Self>, event: Event<E>) -> Box<StateMachineBuilder<S, E>>;
+}
+
+trait TransEnder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+    fn trans_end(self: Box<Self>) -> Box<StateMachineBuilder<S, E>>;
+}
+
 impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachineBuilder<S, E> {
-    fn event(&mut self, event: Event<E>) -> &mut StateMachineBuilder<S, E> {
-        let tranb = self.trans_builder.as_mut().expect("trans builder absent");
-        tranb.source.as_ref().expect("source absent");
-        tranb.source.as_ref().expect("target absent");
-
-        tranb.event(event);
-        self.trans
-            .as_mut()
-            .expect("trans absent!")
-            .push(tranb.build());
-        self
-    }
-    fn target(&mut self, target: State<S>) -> &mut StateMachineBuilder<S, E> {
-        let tranb = self.trans_builder.as_mut().expect("trans builder absent");
-        tranb.source.as_ref().expect("source absent");
-        tranb.target(target);
-        self
-    }
-
-    fn source(&mut self, source: State<S>) -> &mut StateMachineBuilder<S, E> {
-        self.trans_builder
-            .as_mut()
-            .expect("trans builder absent")
-            .source(source);
-        self
-    }
-
-    fn trans(&mut self) -> &mut StateMachineBuilder<S, E> {
-        self.init.as_ref().expect("init absent!");
-        if let None = self.trans {
-            self.trans = Some(vec![])
-        }
-        self.init.as_ref().expect("init absent!");
-        self.init.as_ref().expect("end absent!");
-        self.trans_builder = Some(TransitionBuilder::new());
-        self
-    }
-
-    fn init(&mut self, init: State<S>) -> &mut StateMachineBuilder<S, E> {
-        self.init = Some(init);
-        self
-    }
-
     fn end(&mut self, end: State<S>) -> &mut StateMachineBuilder<S, E> {
         self.init.as_ref().expect("init absent!");
         assert!(self.trans.as_ref().expect("trans absent!").len() > 0);
@@ -163,13 +146,79 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachineBuilder<S, 
         )
     }
 
-    fn new() -> Self {
+    fn new() -> StateMachineBuilder<S, E> {
         StateMachineBuilder {
             init: None,
             end: None,
             trans: None,
             trans_builder: None,
         }
+    }
+}
+
+impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> SmBuilder<S, E>
+    for StateMachineBuilder<S, E>
+{
+    fn init(mut self: Box<Self>, init: State<S>) -> Box<dyn TransStarter<S, E>> {
+        self.init = Some(init);
+        self
+    }
+}
+
+impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> TransStarter<S, E>
+    for StateMachineBuilder<S, E>
+{
+    fn trans_start(mut self: Box<Self>) -> Box<dyn Init<S, E>> {
+        self.trans_builder = Some(TransitionBuilder::new());
+        self.trans = Some(vec![]);
+        self
+    }
+}
+
+impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Init<S, E>
+    for StateMachineBuilder<S, E>
+{
+    fn source(mut self: Box<Self>, source: State<S>) -> Box<dyn Source<S, E>> {
+        let tranb = self.trans_builder.as_mut().expect("trans builder absent");
+        tranb.source(source);
+        self
+    }
+}
+
+impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Source<S, E>
+    for StateMachineBuilder<S, E>
+{
+    fn target(mut self: Box<Self>, target: State<S>) -> Box<dyn Target<S, E>> {
+        let tranb = self.trans_builder.as_mut().expect("trans builder absent");
+        tranb.source.as_ref().expect("source absent");
+        tranb.target(target);
+        self
+    }
+}
+
+impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> Target<S, E>
+    for StateMachineBuilder<S, E>
+{
+    fn event(mut self: Box<Self>, event: Event<E>) -> Box<StateMachineBuilder<S, E>> {
+        let tranb = self.trans_builder.as_mut().expect("trans builder absent");
+        tranb.source.as_ref().expect("source absent");
+        tranb.source.as_ref().expect("target absent");
+
+        tranb.event(event);
+        self.trans
+            .as_mut()
+            .expect("trans absent!")
+            .push(tranb.build());
+        self
+    }
+}
+
+impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> TransEnder<S, E>
+    for StateMachineBuilder<S, E>
+{
+    fn trans_end(mut self: Box<Self>) -> Box<StateMachineBuilder<S, E>> {
+        self.trans_builder = None;
+        self
     }
 }
 
@@ -261,20 +310,19 @@ mod tests {
     }
 
     fn init_sm<S, E>() -> StateMachine<OrderState, OrderEvent> {
-        StateMachineBuilder::new()
+        Box::new(StateMachineBuilder::new())
             .init(State::build(OrderState::I))
-            .trans()
+            .trans_start()
             .source(State::build(OrderState::I))
             .target(State::build(OrderState::P))
             .event(Event::build(OrderEvent::Submit))
-            .trans()
             .source(State::build(OrderState::P))
             .target(State::build(OrderState::S))
             .event(Event::build(OrderEvent::Payment))
-            .trans()
             .source(State::build(OrderState::P))
             .target(State::build(OrderState::F))
             .event(Event::build(OrderEvent::Timeout))
+            .trans_end()
             .end(State::build(OrderState::S))
             .build()
     }
