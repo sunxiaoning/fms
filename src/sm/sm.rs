@@ -105,16 +105,14 @@ struct StateMachineBuilder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
 }
 
 trait SmBuilder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
-    fn init(self: Box<Self>, init: State<S>) -> Box<dyn TransStarter<S, E>>;
+    fn init(self: Box<Self>, init: State<S>) -> Box<dyn TransBuilder<S, E>>;
 }
 
-
-
-trait TransStarter<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
-    fn trans_start(self: Box<Self>) -> Box<dyn Init<S, E>>;
+trait TransBuilder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+    fn trans(self: Box<Self>) -> Box<dyn TranStarter<S, E>>;
 }
 
-trait Init<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+trait TranStarter<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
     fn source(self: Box<Self>, source: State<S>) -> Box<dyn Source<S, E>>;
 }
 
@@ -126,8 +124,12 @@ trait Target<S: PartialEq + Debug + Debug + Clone, E: PartialEq + Debug> {
     fn event(self: Box<Self>, event: Event<E>) -> Box<StateMachineBuilder<S, E>>;
 }
 
+trait TransAdder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+    fn and(self: Box<Self>) -> Box<dyn TranStarter<S, E>>;
+}
+
 trait TransEnder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
-    fn trans_end(self: Box<Self>) -> Box<StateMachineBuilder<S, E>>;
+    fn done(self: Box<Self>) -> Box<StateMachineBuilder<S, E>>;
 }
 
 impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachineBuilder<S, E> {
@@ -150,7 +152,7 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachineBuilder<S, 
         StateMachineBuilder {
             init: None,
             end: None,
-            trans: None,
+            trans: Some(vec![]),
             trans_builder: None,
         }
     }
@@ -159,23 +161,22 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachineBuilder<S, 
 impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> SmBuilder<S, E>
     for StateMachineBuilder<S, E>
 {
-    fn init(mut self: Box<Self>, init: State<S>) -> Box<dyn TransStarter<S, E>> {
+    fn init(mut self: Box<Self>, init: State<S>) -> Box<dyn TransBuilder<S, E>> {
         self.init = Some(init);
         self
     }
 }
 
-impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> TransStarter<S, E>
+impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> TransBuilder<S, E>
     for StateMachineBuilder<S, E>
 {
-    fn trans_start(mut self: Box<Self>) -> Box<dyn Init<S, E>> {
+    fn trans(mut self: Box<Self>) -> Box<dyn TranStarter<S, E>> {
         self.trans_builder = Some(TransitionBuilder::new());
-        self.trans = Some(vec![]);
         self
     }
 }
 
-impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Init<S, E>
+impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> TranStarter<S, E>
     for StateMachineBuilder<S, E>
 {
     fn source(mut self: Box<Self>, source: State<S>) -> Box<dyn Source<S, E>> {
@@ -203,12 +204,20 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> Target<S, E>
         let tranb = self.trans_builder.as_mut().expect("trans builder absent");
         tranb.source.as_ref().expect("source absent");
         tranb.source.as_ref().expect("target absent");
-
         tranb.event(event);
+        self
+    }
+}
+
+impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> TransAdder<S, E>
+    for StateMachineBuilder<S, E>
+{
+    fn and(mut self: Box<Self>) -> Box<dyn TranStarter<S, E>> {
         self.trans
             .as_mut()
             .expect("trans absent!")
-            .push(tranb.build());
+            .push(self.trans_builder.expect("trans builder absent!").build());
+        self.trans_builder = Some(TransitionBuilder::new());
         self
     }
 }
@@ -216,7 +225,11 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> Target<S, E>
 impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> TransEnder<S, E>
     for StateMachineBuilder<S, E>
 {
-    fn trans_end(mut self: Box<Self>) -> Box<StateMachineBuilder<S, E>> {
+    fn done(mut self: Box<Self>) -> Box<StateMachineBuilder<S, E>> {
+        self.trans
+            .as_mut()
+            .expect("trans absent!")
+            .push(self.trans_builder.expect("trans builder absent!").build());
         self.trans_builder = None;
         self
     }
@@ -312,17 +325,19 @@ mod tests {
     fn init_sm<S, E>() -> StateMachine<OrderState, OrderEvent> {
         Box::new(StateMachineBuilder::new())
             .init(State::build(OrderState::I))
-            .trans_start()
+            .trans()
             .source(State::build(OrderState::I))
             .target(State::build(OrderState::P))
             .event(Event::build(OrderEvent::Submit))
+            .and()
             .source(State::build(OrderState::P))
             .target(State::build(OrderState::S))
             .event(Event::build(OrderEvent::Payment))
+            .and()
             .source(State::build(OrderState::P))
             .target(State::build(OrderState::F))
             .event(Event::build(OrderEvent::Timeout))
-            .trans_end()
+            .done()
             .end(State::build(OrderState::S))
             .build()
     }
