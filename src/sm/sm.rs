@@ -362,7 +362,7 @@ mod tests {
 
     fn submit(ctx: &StateContext<OrderState, OrderEvent>) -> Result<bool, &'static str> {
         println!(
-            "------s: {:?}, t: {:?} submit!-----------",
+            "--- s: {:?}, t: {:?} submit! ---",
             ctx.tran.source.id, ctx.tran.target.id
         );
         Ok(true)
@@ -370,7 +370,7 @@ mod tests {
 
     fn pay(ctx: &StateContext<OrderState, OrderEvent>) -> Result<bool, &'static str> {
         println!(
-            "s: {:?}, t: {:?} pay!",
+            "---- s: {:?}, t: {:?} pay! ----",
             ctx.tran.source.id, ctx.tran.target.id
         );
         Ok(true)
@@ -378,7 +378,7 @@ mod tests {
 
     fn err(ctx: &StateContext<OrderState, OrderEvent>) -> Result<bool, &'static str> {
         println!(
-            "s: {:?}, t: {:?} timeout!",
+            "----- s: {:?}, t: {:?} timeout! -----",
             ctx.tran.source.id, ctx.tran.target.id
         );
         Ok(true)
