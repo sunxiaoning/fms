@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::fmt::Debug;
 
 struct TransitionBuilder<S: PartialEq + Debug + Clone, E: PartialEq> {
     source: Option<State<S>>,
     target: Option<State<S>>,
-    event: Option<Event<E>>,
+    event: Option<E>,
     action: Option<Action<S, E>>,
 }
 
@@ -20,7 +21,7 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq> TransitionBuilder<S, E> {
         self.action = Some(act);
         self
     }
-    fn event(&mut self, event: Event<E>) -> &mut Self {
+    fn event(&mut self, event: E) -> &mut Self {
         self.event = Some(event);
         self
     }
@@ -43,12 +44,13 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq> TransitionBuilder<S, E> {
 }
 
 struct StateContext<'a, S: PartialEq + Debug + Clone, E: PartialEq> {
+    message: &'a Message<E>,
     tran: &'a Transition<S, E>,
 }
 
 impl<'a, S: PartialEq + Debug + Clone, E: PartialEq> StateContext<'a, S, E> {
-    fn new(tran: &Transition<S, E>) -> StateContext<S, E> {
-        StateContext { tran }
+    fn new(tran: &'a Transition<S, E>, message: &'a Message<E>) -> StateContext<'a, S, E> {
+        StateContext { tran, message }
     }
 }
 
@@ -57,7 +59,7 @@ type Action<S, E> = fn(ctx: &StateContext<S, E>) -> Result<bool, &'static str>;
 struct Transition<S: PartialEq + Debug + Clone, E: PartialEq> {
     source: State<S>,
     target: State<S>,
-    event: Event<E>,
+    event: E,
     action: Action<S, E>,
 }
 
@@ -66,7 +68,7 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq> Transition<S, E> {
         Ok(true)
     }
 
-    fn new(source: State<S>, target: State<S>, event: Event<E>, action: Action<S, E>) -> Self {
+    fn new(source: State<S>, target: State<S>, event: E, action: Action<S, E>) -> Self {
         Transition {
             source,
             target,
@@ -76,19 +78,73 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq> Transition<S, E> {
     }
 }
 
-struct Event<E: PartialEq> {
-    id: E,
+struct MessageBuilder<T> {
+    payload: Option<T>,
+    headers: Option<HashMap<String, String>>,
 }
 
-impl<E: PartialEq> PartialEq for Event<E> {
-    fn eq(&self, other: &Event<E>) -> bool {
-        self.id == other.id
+impl<T> MessageBuilder<T> {
+    fn build(&mut self) -> Message<T> {
+        let payload = self.payload.take().expect("payload absent!");
+        if let None = self.headers {
+            Message::new(payload)
+        } else {
+            Message::new_with_header(payload, self.headers.take().unwrap())
+        }
+    }
+
+    fn add_header(&mut self, key: String, val: String) -> &mut MessageBuilder<T> {
+        if let None = self.headers {
+            self.headers = Some(HashMap::new());
+        }
+        self.headers.as_mut().unwrap().insert(key, val);
+        self
+    }
+
+    fn payload(&mut self, payload: T) -> &mut MessageBuilder<T> {
+        self.payload = Some(payload);
+        self
+    }
+
+    fn new() -> MessageBuilder<T> {
+        MessageBuilder {
+            payload: None,
+            headers: None,
+        }
     }
 }
 
-impl<E: PartialEq> Event<E> {
-    fn build(id: E) -> Self {
-        Event { id }
+struct Message<T> {
+    payload: T,
+    headers: Option<HashMap<String, String>>,
+}
+
+impl<T> Message<T> {
+    fn get_header(&self, key: &str) -> Option<&String> {
+        if let Some(headers) = &self.headers {
+            headers.get(&String::from(key))
+        } else {
+            None
+        }
+    }
+
+    fn get_payload(&self) -> &T {
+        &self.payload
+    }
+
+    fn new(payload: T) -> Message<T> {
+        Message {
+            payload,
+            headers: None,
+        }
+    }
+
+    fn new_with_header(payload: T, headers: HashMap<String, String>) -> Message<T> {
+        assert!(headers.len() > 0);
+        Message {
+            payload,
+            headers: Some(headers),
+        }
     }
 }
 
@@ -141,7 +197,7 @@ trait Source<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
 }
 
 trait Target<S: PartialEq + Debug + Debug + Clone, E: PartialEq + Debug> {
-    fn event(self: Box<Self>, event: Event<E>) -> Box<dyn Act<S, E>>;
+    fn event(self: Box<Self>, event: E) -> Box<dyn Act<S, E>>;
 }
 
 trait Act<S: PartialEq + Debug + Debug + Clone, E: PartialEq + Debug> {
@@ -224,7 +280,7 @@ impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Sou
 impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Target<S, E>
     for StateMachineBuilder<S, E>
 {
-    fn event(mut self: Box<Self>, event: Event<E>) -> Box<dyn Act<S, E>> {
+    fn event(mut self: Box<Self>, event: E) -> Box<dyn Act<S, E>> {
         let tranb = self.trans_builder.as_mut().expect("trans builder absent");
         tranb.source.as_ref().expect("source absent");
         tranb.target.as_ref().expect("target absent");
@@ -294,32 +350,40 @@ impl<'a, S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachine<S, E> 
         &self.current
     }
 
-    fn send_event(&mut self, e: &Event<E>) -> bool {
+    fn send_event(&mut self, message: &Message<E>) -> bool {
         if self.has_err() {
             println!("statemachine err: {}!", self.err.as_ref().unwrap());
             return false;
         }
         if !self.is_running() {
-            println!("statemachine not running, event: {:?} not accept!", e.id);
+            println!(
+                "statemachine not running, event: {:?} not accept!",
+                message.get_payload()
+            );
             return false;
         }
 
         let mut rs = false;
         for tran in self.trans.iter() {
-            if tran.source.eq(&self.current) && tran.event.eq(e) {
+            if tran.source.eq(&self.current) && tran.event.eq(message.get_payload()) {
                 let mut err_msg = None;
-                let state_ctx = StateContext::new(tran);
+                let state_ctx = StateContext::new(tran, message);
                 rs = tran.transit(&state_ctx).unwrap_or_else(|err| {
                     eprintln!(
                         "state machine trans: source: {:?}, event: {:?}, err: {}",
-                        tran.source.id, e.id, err
+                        tran.source.id,
+                        message.get_payload(),
+                        err
                     );
                     err_msg = Some(String::from(err.clone()));
                     false
                 });
                 self.err = err_msg;
                 if !rs {
-                    println!("statemachine event: {:?} not accept!", e.id);
+                    println!(
+                        "statemachine event: {:?} not accept!",
+                        message.get_payload()
+                    );
                     break;
                 }
                 (tran.action)(&state_ctx).unwrap();
@@ -327,7 +391,10 @@ impl<'a, S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachine<S, E> 
                 break;
             }
         }
-        println!("statemachine event: {:?} not accept!", e.id);
+        println!(
+            "statemachine event: {:?} not accept!",
+            message.get_payload()
+        );
         rs
     }
     fn new(init: State<S>, end: State<S>, trans: Vec<Transition<S, E>>) -> StateMachine<S, E> {
@@ -362,9 +429,15 @@ mod tests {
 
     fn submit(ctx: &StateContext<OrderState, OrderEvent>) -> Result<bool, &'static str> {
         println!(
-            "--- s: {:?}, t: {:?} submit! ---",
+            "--- s: {:?}, t: {:?} submit!",
             ctx.tran.source.id, ctx.tran.target.id
         );
+        let headers = ctx.message.headers.as_ref();
+        if let Some(hs) = headers {
+            println!("{:#?}", hs)
+        } else {
+            println!("none header!")
+        }
         Ok(true)
     }
 
@@ -373,6 +446,13 @@ mod tests {
             "---- s: {:?}, t: {:?} pay! ----",
             ctx.tran.source.id, ctx.tran.target.id
         );
+        let headers = ctx.message.headers.as_ref();
+        if let Some(hs) = headers {
+            println!("{:#?}", hs);
+            println!("nsk1: {:?}", ctx.message.get_header("nsk1"));
+        } else {
+            println!("none header!");
+        }
         Ok(true)
     }
 
@@ -381,6 +461,12 @@ mod tests {
             "----- s: {:?}, t: {:?} timeout! -----",
             ctx.tran.source.id, ctx.tran.target.id
         );
+        let headers = ctx.message.headers.as_ref();
+        if let Some(hs) = headers {
+            println!("{:#?}", hs);
+        } else {
+            println!("none header!");
+        }
         Ok(true)
     }
 
@@ -390,17 +476,17 @@ mod tests {
             .trans()
             .source(State::build(OrderState::I))
             .target(State::build(OrderState::P))
-            .event(Event::build(OrderEvent::Submit))
+            .event(OrderEvent::Submit)
             .action(submit)
             .and()
             .source(State::build(OrderState::P))
             .target(State::build(OrderState::S))
-            .event(Event::build(OrderEvent::Payment))
+            .event(OrderEvent::Payment)
             .action(pay)
             .and()
             .source(State::build(OrderState::P))
             .target(State::build(OrderState::F))
-            .event(Event::build(OrderEvent::Timeout))
+            .event(OrderEvent::Timeout)
             .action(err)
             .done()
             .end(State::build(OrderState::S))
@@ -419,24 +505,74 @@ mod tests {
     #[test]
     fn send_event_normal() {
         let mut sm = init_sm::<OrderState, OrderEvent>();
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Submit)), true);
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Submit)), false);
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Payment)), true);
+        assert_eq!(
+            sm.send_event(
+                &MessageBuilder::new()
+                    .payload(OrderEvent::Submit)
+                    .add_header("nsk1".to_string(), "nsv1".to_string())
+                    .build()
+            ),
+            true
+        );
+        assert_eq!(
+            sm.send_event(&MessageBuilder::new().payload(OrderEvent::Submit).build()),
+            false
+        );
+        assert_eq!(
+            sm.send_event(
+                &MessageBuilder::new()
+                    .payload(OrderEvent::Payment)
+                    .add_header("npk1".to_string(), "npv1".to_string())
+                    .build()
+            ),
+            true
+        );
         assert_eq!(sm.is_running(), false);
         assert_eq!(sm.get_state(), &State::build(OrderState::S));
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Payment)), false);
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Timeout)), false);
+        assert_eq!(
+            sm.send_event(&MessageBuilder::new().payload(OrderEvent::Payment).build()),
+            false
+        );
+        assert_eq!(
+            sm.send_event(&MessageBuilder::new().payload(OrderEvent::Timeout).build()),
+            false
+        );
     }
 
     #[test]
     fn send_event_timeout() {
         let mut sm = init_sm::<OrderState, OrderEvent>();
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Submit)), true);
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Submit)), false);
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Timeout)), true);
+        assert_eq!(
+            sm.send_event(
+                &MessageBuilder::new()
+                    .payload(OrderEvent::Submit)
+                    .add_header("tpk1".to_string(), "tpv1".to_string())
+                    .build()
+            ),
+            true
+        );
+        assert_eq!(
+            sm.send_event(&MessageBuilder::new().payload(OrderEvent::Submit).build()),
+            false
+        );
+        assert_eq!(
+            sm.send_event(
+                &MessageBuilder::new()
+                    .payload(OrderEvent::Timeout)
+                    .add_header("tpk1".to_string(), "tpv1".to_string())
+                    .build()
+            ),
+            true
+        );
         assert_eq!(sm.is_running(), true);
         assert_eq!(sm.get_state(), &State::build(OrderState::F));
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Timeout)), false);
-        assert_eq!(sm.send_event(&Event::build(OrderEvent::Payment)), false);
+        assert_eq!(
+            sm.send_event(&MessageBuilder::new().payload(OrderEvent::Timeout).build()),
+            false
+        );
+        assert_eq!(
+            sm.send_event(&MessageBuilder::new().payload(OrderEvent::Payment).build()),
+            false
+        );
     }
 }
