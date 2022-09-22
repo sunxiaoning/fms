@@ -6,6 +6,7 @@ struct TransitionBuilder<S: PartialEq + Debug + Clone, E: PartialEq> {
     target: Option<State<S>>,
     event: Option<E>,
     action: Option<Action<S, E>>,
+    guard: Option<Guard<S, E>>,
 }
 
 impl<S: PartialEq + Debug + Clone, E: PartialEq> TransitionBuilder<S, E> {
@@ -14,11 +15,16 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq> TransitionBuilder<S, E> {
             self.source.take().expect("source state absent!"),
             self.target.take().expect("target state absent!"),
             self.event.take().expect("event absent"),
-            self.action.take().expect("action absent"),
+            self.action.take(),
+            self.guard.take(),
         )
     }
-    fn action(&mut self, act: Action<S, E>) -> &mut Self {
-        self.action = Some(act);
+    fn guard(&mut self, guard: Option<Guard<S, E>>) -> &mut Self {
+        self.guard = guard;
+        self
+    }
+    fn action(&mut self, act: Option<Action<S, E>>) -> &mut Self {
+        self.action = act;
         self
     }
     fn event(&mut self, event: E) -> &mut Self {
@@ -39,6 +45,7 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq> TransitionBuilder<S, E> {
             target: None,
             event: None,
             action: None,
+            guard: None,
         }
     }
 }
@@ -54,26 +61,40 @@ impl<'a, S: PartialEq + Debug + Clone, E: PartialEq> StateContext<'a, S, E> {
     }
 }
 
-type Action<S, E> = fn(ctx: &StateContext<S, E>) -> Result<bool, &'static str>;
+type Action<S, E> = fn(ctx: &StateContext<S, E>) -> Result<(), &'static str>;
+
+type Guard<S, E> = fn(ctx: &StateContext<S, E>) -> bool;
 
 struct Transition<S: PartialEq + Debug + Clone, E: PartialEq> {
     source: State<S>,
     target: State<S>,
     event: E,
-    action: Action<S, E>,
+    guard: Option<Guard<S, E>>,
+    action: Option<Action<S, E>>,
 }
 
 impl<S: PartialEq + Debug + Clone, E: PartialEq> Transition<S, E> {
-    fn transit(&self, _ctx: &StateContext<S, E>) -> Result<bool, &str> {
-        Ok(true)
+    fn transit(&self, ctx: &StateContext<S, E>) -> Result<bool, &str> {
+        if let Some(gurd) = self.guard {
+            Ok(gurd(ctx))
+        } else {
+            Ok(true)
+        }
     }
 
-    fn new(source: State<S>, target: State<S>, event: E, action: Action<S, E>) -> Self {
+    fn new(
+        source: State<S>,
+        target: State<S>,
+        event: E,
+        action: Option<Action<S, E>>,
+        guard: Option<Guard<S, E>>,
+    ) -> Self {
         Transition {
             source,
             target,
             event,
-            action,
+            guard: guard,
+            action: action,
         }
     }
 }
@@ -201,7 +222,11 @@ trait Target<S: PartialEq + Debug + Debug + Clone, E: PartialEq + Debug> {
 }
 
 trait Act<S: PartialEq + Debug + Debug + Clone, E: PartialEq + Debug> {
-    fn action(self: Box<Self>, act: Action<S, E>) -> Box<StateMachineBuilder<S, E>>;
+    fn action(self: Box<Self>, act: Option<Action<S, E>>) -> Box<dyn Gurd<S, E>>;
+}
+
+trait Gurd<S: PartialEq + Debug + Debug + Clone, E: PartialEq + Debug> {
+    fn guard(self: Box<Self>, guard: Option<Guard<S, E>>) -> Box<StateMachineBuilder<S, E>>;
 }
 
 trait TransAdder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
@@ -289,13 +314,26 @@ impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Tar
     }
 }
 
-impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> Act<S, E> for StateMachineBuilder<S, E> {
-    fn action(mut self: Box<Self>, act: Action<S, E>) -> Box<StateMachineBuilder<S, E>> {
+impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Act<S, E>
+    for StateMachineBuilder<S, E>
+{
+    fn action(mut self: Box<Self>, act: Option<Action<S, E>>) -> Box<dyn Gurd<S, E>> {
         let tranb = self.trans_builder.as_mut().expect("trans builder absent");
         tranb.source.as_ref().expect("source absent");
         tranb.target.as_ref().expect("target absent");
         tranb.event.as_ref().expect("event absent");
         tranb.action(act);
+        self
+    }
+}
+
+impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> Gurd<S, E> for StateMachineBuilder<S, E> {
+    fn guard(mut self: Box<Self>, guard: Option<Guard<S, E>>) -> Box<StateMachineBuilder<S, E>> {
+        let tranb = self.trans_builder.as_mut().expect("trans builder absent");
+        tranb.source.as_ref().expect("source absent");
+        tranb.target.as_ref().expect("target absent");
+        tranb.event.as_ref().expect("event absent");
+        tranb.guard(guard);
         self
     }
 }
@@ -386,7 +424,9 @@ impl<'a, S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachine<S, E> 
                     );
                     break;
                 }
-                (tran.action)(&state_ctx).unwrap();
+                if let Some(act) = tran.action {
+                    act(&state_ctx).unwrap();
+                }
                 self.current = tran.target.clone();
                 break;
             }
@@ -427,7 +467,7 @@ mod tests {
         Timeout,
     }
 
-    fn submit(ctx: &StateContext<OrderState, OrderEvent>) -> Result<bool, &'static str> {
+    fn submit(ctx: &StateContext<OrderState, OrderEvent>) -> Result<(), &'static str> {
         println!(
             "--- s: {:?}, t: {:?} submit!",
             ctx.tran.source.id, ctx.tran.target.id
@@ -438,10 +478,10 @@ mod tests {
         } else {
             println!("none header!")
         }
-        Ok(true)
+        Ok(())
     }
 
-    fn pay(ctx: &StateContext<OrderState, OrderEvent>) -> Result<bool, &'static str> {
+    fn pay(ctx: &StateContext<OrderState, OrderEvent>) -> Result<(), &'static str> {
         println!(
             "---- s: {:?}, t: {:?} pay! ----",
             ctx.tran.source.id, ctx.tran.target.id
@@ -453,10 +493,10 @@ mod tests {
         } else {
             println!("none header!");
         }
-        Ok(true)
+        Ok(())
     }
 
-    fn err(ctx: &StateContext<OrderState, OrderEvent>) -> Result<bool, &'static str> {
+    fn err(ctx: &StateContext<OrderState, OrderEvent>) -> Result<(), &'static str> {
         println!(
             "----- s: {:?}, t: {:?} timeout! -----",
             ctx.tran.source.id, ctx.tran.target.id
@@ -467,7 +507,7 @@ mod tests {
         } else {
             println!("none header!");
         }
-        Ok(true)
+        Ok(())
     }
 
     fn init_sm<S, E>() -> StateMachine<OrderState, OrderEvent> {
@@ -477,17 +517,26 @@ mod tests {
             .source(State::build(OrderState::I))
             .target(State::build(OrderState::P))
             .event(OrderEvent::Submit)
-            .action(submit)
+            .action(Some(submit))
+            .guard(None)
             .and()
             .source(State::build(OrderState::P))
             .target(State::build(OrderState::S))
             .event(OrderEvent::Payment)
-            .action(pay)
+            .action(Some(pay))
+            .guard(Some(|ctx| {
+                if let Some(hres) = ctx.message.get_header("hres") {
+                    hres.to_string() == "ok"
+                } else {
+                    false
+                }
+            }))
             .and()
             .source(State::build(OrderState::P))
             .target(State::build(OrderState::F))
             .event(OrderEvent::Timeout)
-            .action(err)
+            .action(Some(err))
+            .guard(None)
             .done()
             .end(State::build(OrderState::S))
             .build()
@@ -523,6 +572,26 @@ mod tests {
                 &MessageBuilder::new()
                     .payload(OrderEvent::Payment)
                     .add_header("npk1".to_string(), "npv1".to_string())
+                    .build()
+            ),
+            false
+        );
+        assert_eq!(
+            sm.send_event(
+                &MessageBuilder::new()
+                    .payload(OrderEvent::Payment)
+                    .add_header("npk1".to_string(), "npv1".to_string())
+                    .add_header("hres".to_string(), "ook".to_string())
+                    .build()
+            ),
+            false
+        );
+        assert_eq!(
+            sm.send_event(
+                &MessageBuilder::new()
+                    .payload(OrderEvent::Payment)
+                    .add_header("npk1".to_string(), "npv1".to_string())
+                    .add_header("hres".to_string(), "ok".to_string())
                     .build()
             ),
             true
