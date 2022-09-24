@@ -75,12 +75,11 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq> Transition<S, E> {
 }
 
 pub struct TransitionBuilder<S: PartialEq + Debug + Clone, E: PartialEq> {
-    // TODO fix
-    pub source: Option<State<S>>,
-    pub target: Option<State<S>>,
-    pub event: Option<E>,
-    pub action: Option<Action<S, E>>,
-    pub guard: Option<Guard<S, E>>,
+    source: Option<State<S>>,
+    target: Option<State<S>>,
+    event: Option<E>,
+    action: Option<Action<S, E>>,
+    guard: Option<Guard<S, E>>,
 }
 
 impl<S: PartialEq + Debug + Clone, E: PartialEq> TransitionBuilder<S, E> {
@@ -94,18 +93,27 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq> TransitionBuilder<S, E> {
         )
     }
     pub fn guard(&mut self, guard: Option<Guard<S, E>>) -> &mut Self {
+        self.source.as_ref().expect("source absent");
+        self.target.as_ref().expect("target absent");
+        self.event.as_ref().expect("event absent");
         self.guard = guard;
         self
     }
     pub fn action(&mut self, act: Option<Action<S, E>>) -> &mut Self {
+        self.source.as_ref().expect("source absent");
+        self.target.as_ref().expect("target absent");
+        self.event.as_ref().expect("event absent");
         self.action = act;
         self
     }
     pub fn event(&mut self, event: E) -> &mut Self {
+        self.source.as_ref().expect("source absent");
+        self.target.as_ref().expect("target absent");
         self.event = Some(event);
         self
     }
     pub fn target(&mut self, target: State<S>) -> &mut Self {
+        self.source.as_ref().expect("source absent");
         self.target = Some(target);
         self
     }
