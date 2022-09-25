@@ -1,22 +1,30 @@
 pub mod msg;
 pub mod state;
 pub mod trans;
+use std::collections::HashMap;
+use std::hash::Hash;
+
 use crate::sm::state::*;
 use crate::sm::trans::*;
 
 use crate::sm::msg::*;
 
-use std::fmt::Debug;
-
-struct StateMachine<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+struct StateMachine<S: StateId, E: EventId> {
     init: State<S>,
     end: State<S>,
     current: State<S>,
     err: Option<String>,
-    trans: Vec<Transition<S, E>>,
+    event_trans: HashMap<E, Vec<Transition<S, E>>>,
 }
 
-impl<'a, S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachine<S, E> {
+impl<S: StateId, E: EventId> StateMachine<S, E> {
+    fn all_trans(&self) -> Vec<&Transition<S, E>> {
+        self.event_trans
+            .values()
+            .into_iter()
+            .flat_map(|tran| tran)
+            .collect()
+    }
     fn is_running(&self) -> bool {
         return !self.current.eq(&self.end);
     }
@@ -44,10 +52,14 @@ impl<'a, S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachine<S, E> 
             );
             return false;
         }
-
+        let event_trans = self.event_trans.get(message.get_payload());
+        if let None = event_trans {
+            println!("trans emtpy,event: {:?} not accept!", message.get_payload());
+            return false;
+        }
         let mut rs = false;
-        for tran in self.trans.iter() {
-            if tran.source().eq(&self.current) && tran.event().eq(message.get_payload()) {
+        for tran in event_trans.unwrap().iter() {
+            if tran.source().eq(&self.current) {
                 let mut err_msg = None;
                 let state_ctx = StateContext::new(tran, message);
                 rs = tran.transit(&state_ctx).unwrap_or_else(|err| {
@@ -81,27 +93,29 @@ impl<'a, S: PartialEq + Debug + Clone, E: PartialEq + Debug> StateMachine<S, E> 
         );
         rs
     }
-    fn new(init: State<S>, end: State<S>, trans: Vec<Transition<S, E>>) -> StateMachine<S, E> {
+    fn new(
+        init: State<S>,
+        end: State<S>,
+        event_trans: HashMap<E, Vec<Transition<S, E>>>,
+    ) -> StateMachine<S, E> {
         StateMachine {
             init: init.clone(),
-            end: end,
+            end,
             current: init,
             err: None,
-            trans: trans,
+            event_trans,
         }
     }
 }
 
-struct StateMachineBuilder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+struct StateMachineBuilder<S: StateId, E: EventId> {
     init: Option<State<S>>,
     end: Option<State<S>>,
     trans: Option<Vec<Transition<S, E>>>,
     trans_builder: Option<TransitionBuilder<S, E>>,
 }
 
-impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static>
-    StateMachineBuilder<S, E>
-{
+impl<S: StateId + 'static, E: EventId + 'static> StateMachineBuilder<S, E> {
     fn config(self) -> Box<dyn SmBuilder<S, E>> {
         Box::new(self)
     }
@@ -114,68 +128,62 @@ impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static>
         }
     }
 }
-trait SmBuilder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+trait SmBuilder<S: StateId, E: EventId> {
     fn init(self: Box<Self>, init: State<S>) -> Box<dyn TransBuilder<S, E>>;
 }
 
-trait TransBuilder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+trait TransBuilder<S: StateId, E: EventId> {
     fn trans(self: Box<Self>) -> Box<dyn TranStarter<S, E>>;
 }
 
-trait TranStarter<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+trait TranStarter<S: StateId, E: EventId> {
     fn source(self: Box<Self>, source: State<S>) -> Box<dyn Source<S, E>>;
 }
 
-trait Source<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+trait Source<S: StateId, E: EventId> {
     fn target(self: Box<Self>, target: State<S>) -> Box<dyn Target<S, E>>;
 }
 
-trait Target<S: PartialEq + Debug + Debug + Clone, E: PartialEq + Debug> {
+trait Target<S: StateId, E: EventId> {
     fn event(self: Box<Self>, event: E) -> Box<dyn Act<S, E>>;
 }
 
-trait Act<S: PartialEq + Debug + Debug + Clone, E: PartialEq + Debug> {
+trait Act<S: StateId, E: EventId> {
     fn action(self: Box<Self>, act: Option<Action<S, E>>) -> Box<dyn Gurd<S, E>>;
 }
 
-trait Gurd<S: PartialEq + Debug + Debug + Clone, E: PartialEq + Debug> {
+trait Gurd<S: StateId, E: EventId> {
     fn guard(self: Box<Self>, guard: Option<Guard<S, E>>) -> Box<dyn TransEnder<S, E>>;
 }
 
-trait TransEnder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+trait TransEnder<S: StateId, E: EventId> {
     fn and(self: Box<Self>) -> Box<dyn TranStarter<S, E>>;
     fn done(self: Box<Self>) -> Box<dyn SmEnder<S, E>>;
 }
 
-trait SmEnder<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+trait SmEnder<S: StateId, E: EventId> {
     fn end(self: Box<Self>, end: State<S>) -> Box<dyn SmFactory<S, E>>;
 }
 
-trait SmFactory<S: PartialEq + Debug + Clone, E: PartialEq + Debug> {
+trait SmFactory<S: StateId, E: EventId> {
     fn build(self: Box<Self>) -> StateMachine<S, E>;
 }
 
-impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> SmBuilder<S, E>
-    for StateMachineBuilder<S, E>
-{
+impl<S: StateId + 'static, E: EventId + 'static> SmBuilder<S, E> for StateMachineBuilder<S, E> {
     fn init(mut self: Box<Self>, init: State<S>) -> Box<dyn TransBuilder<S, E>> {
         self.init = Some(init);
         self
     }
 }
 
-impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> TransBuilder<S, E>
-    for StateMachineBuilder<S, E>
-{
+impl<S: StateId + 'static, E: EventId + 'static> TransBuilder<S, E> for StateMachineBuilder<S, E> {
     fn trans(mut self: Box<Self>) -> Box<dyn TranStarter<S, E>> {
         self.trans_builder = Some(TransitionBuilder::new());
         self
     }
 }
 
-impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> TranStarter<S, E>
-    for StateMachineBuilder<S, E>
-{
+impl<S: StateId + 'static, E: EventId + 'static> TranStarter<S, E> for StateMachineBuilder<S, E> {
     fn source(mut self: Box<Self>, source: State<S>) -> Box<dyn Source<S, E>> {
         self.trans_builder
             .as_mut()
@@ -185,9 +193,7 @@ impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Tra
     }
 }
 
-impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Source<S, E>
-    for StateMachineBuilder<S, E>
-{
+impl<S: StateId + 'static, E: EventId + 'static> Source<S, E> for StateMachineBuilder<S, E> {
     fn target(mut self: Box<Self>, target: State<S>) -> Box<dyn Target<S, E>> {
         self.trans_builder
             .as_mut()
@@ -197,9 +203,7 @@ impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Sou
     }
 }
 
-impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Target<S, E>
-    for StateMachineBuilder<S, E>
-{
+impl<S: StateId + 'static, E: EventId + 'static> Target<S, E> for StateMachineBuilder<S, E> {
     fn event(mut self: Box<Self>, event: E) -> Box<dyn Act<S, E>> {
         self.trans_builder
             .as_mut()
@@ -209,9 +213,7 @@ impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Tar
     }
 }
 
-impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Act<S, E>
-    for StateMachineBuilder<S, E>
-{
+impl<S: StateId + 'static, E: EventId + 'static> Act<S, E> for StateMachineBuilder<S, E> {
     fn action(mut self: Box<Self>, act: Option<Action<S, E>>) -> Box<dyn Gurd<S, E>> {
         self.trans_builder
             .as_mut()
@@ -221,9 +223,7 @@ impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Act
     }
 }
 
-impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Gurd<S, E>
-    for StateMachineBuilder<S, E>
-{
+impl<S: StateId + 'static, E: EventId + 'static> Gurd<S, E> for StateMachineBuilder<S, E> {
     fn guard(mut self: Box<Self>, guard: Option<Guard<S, E>>) -> Box<dyn TransEnder<S, E>> {
         self.trans_builder
             .as_mut()
@@ -233,9 +233,7 @@ impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Gur
     }
 }
 
-impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> TransEnder<S, E>
-    for StateMachineBuilder<S, E>
-{
+impl<S: StateId + 'static, E: EventId + 'static> TransEnder<S, E> for StateMachineBuilder<S, E> {
     fn and(mut self: Box<Self>) -> Box<dyn TranStarter<S, E>> {
         self.trans
             .as_mut()
@@ -254,9 +252,7 @@ impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> Tra
     }
 }
 
-impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> SmEnder<S, E>
-    for StateMachineBuilder<S, E>
-{
+impl<S: StateId + 'static, E: EventId + 'static> SmEnder<S, E> for StateMachineBuilder<S, E> {
     fn end(mut self: Box<Self>, end: State<S>) -> Box<dyn SmFactory<S, E>> {
         self.init.as_ref().expect("init absent!");
         assert!(self.trans.as_ref().expect("trans absent!").len() > 0);
@@ -265,14 +261,20 @@ impl<S: PartialEq + Debug + Clone + 'static, E: PartialEq + Debug + 'static> SmE
     }
 }
 
-impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> SmFactory<S, E>
-    for StateMachineBuilder<S, E>
-{
+impl<S: StateId, E: EventId> SmFactory<S, E> for StateMachineBuilder<S, E> {
     fn build(mut self: Box<Self>) -> StateMachine<S, E> {
+        let trans = self.trans.take().expect("trans absent!");
+        let mut event_trans: HashMap<E, Vec<Transition<S, E>>> = HashMap::new();
+        for t in trans.into_iter() {
+            let vec = event_trans.entry(t.event().clone()).or_insert(vec![]);
+            if !vec.contains(&t) {
+                vec.push(t);
+            }
+        }
         StateMachine::new(
             self.init.take().expect("init state absent!"),
             self.end.take().expect("end state absent!"),
-            self.trans.take().expect("trans absent!"),
+            event_trans,
         )
     }
 }
@@ -281,7 +283,7 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq + Debug> SmFactory<S, E>
 mod tests {
     use super::*;
 
-    #[derive(PartialEq, Debug, Clone)]
+    #[derive(PartialEq, Eq, Hash, Debug, Clone)]
     enum OrderState {
         I,
         P,
@@ -289,12 +291,16 @@ mod tests {
         F,
     }
 
-    #[derive(PartialEq, Debug)]
+    impl StateId for OrderState {}
+
+    #[derive(PartialEq, Debug, Clone, Eq, Hash)]
     enum OrderEvent {
         Submit,
         Payment,
         Timeout,
     }
+
+    impl EventId for OrderEvent {}
 
     fn submit(ctx: &StateContext<OrderState, OrderEvent>) -> Result<(), &'static str> {
         println!(
@@ -381,7 +387,7 @@ mod tests {
         let si = State::new(OrderState::I);
         assert!(sm.init.eq(&si));
         assert!(sm.current.eq(&si));
-        assert_eq!(sm.trans.len(), 3);
+        assert_eq!(sm.all_trans().len(), 3);
     }
 
     #[test]

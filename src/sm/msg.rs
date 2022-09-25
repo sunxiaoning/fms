@@ -1,4 +1,9 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
+use std::hash::Hash;
+
+pub trait EventId: PartialEq + Debug + Clone + Eq + Hash {}
+
 pub struct Message<T> {
     payload: T,
     headers: Option<HashMap<String, String>>,

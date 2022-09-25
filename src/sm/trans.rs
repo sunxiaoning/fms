@@ -1,12 +1,15 @@
+use std::fmt::Debug;
+
+use crate::sm::msg::EventId;
 use crate::sm::msg::Message;
 use crate::sm::state::State;
-use std::fmt::Debug;
-pub struct StateContext<'a, S: PartialEq + Debug + Clone, E: PartialEq> {
+use crate::sm::state::StateId;
+pub struct StateContext<'a, S: StateId, E: EventId> {
     message: &'a Message<E>,
     tran: &'a Transition<S, E>,
 }
 
-impl<'a, S: PartialEq + Debug + Clone, E: PartialEq> StateContext<'a, S, E> {
+impl<'a, S: StateId, E: EventId> StateContext<'a, S, E> {
     pub fn new(tran: &'a Transition<S, E>, message: &'a Message<E>) -> StateContext<'a, S, E> {
         StateContext { tran, message }
     }
@@ -23,8 +26,7 @@ impl<'a, S: PartialEq + Debug + Clone, E: PartialEq> StateContext<'a, S, E> {
 pub type Action<S, E> = fn(ctx: &StateContext<S, E>) -> Result<(), &'static str>;
 
 pub type Guard<S, E> = fn(ctx: &StateContext<S, E>) -> bool;
-
-pub struct Transition<S: PartialEq + Debug + Clone, E: PartialEq> {
+pub struct Transition<S: StateId, E: EventId> {
     source: State<S>,
     target: State<S>,
     event: E,
@@ -32,7 +34,17 @@ pub struct Transition<S: PartialEq + Debug + Clone, E: PartialEq> {
     action: Option<Action<S, E>>,
 }
 
-impl<S: PartialEq + Debug + Clone, E: PartialEq> Transition<S, E> {
+impl<S: StateId, E: EventId> Debug for Transition<S, E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Transition")
+            .field("source", &self.source)
+            .field("target", &self.target)
+            .field("event", &self.event)
+            .finish()
+    }
+}
+
+impl<S: StateId, E: EventId> Transition<S, E> {
     pub fn transit(&self, ctx: &StateContext<S, E>) -> Result<bool, &str> {
         if let Some(gurd) = self.guard {
             Ok(gurd(ctx))
@@ -47,7 +59,7 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq> Transition<S, E> {
         event: E,
         action: Option<Action<S, E>>,
         guard: Option<Guard<S, E>>,
-    ) -> Self {
+    ) -> Transition<S, E> {
         Transition {
             source,
             target,
@@ -74,7 +86,13 @@ impl<S: PartialEq + Debug + Clone, E: PartialEq> Transition<S, E> {
     }
 }
 
-pub struct TransitionBuilder<S: PartialEq + Debug + Clone, E: PartialEq> {
+impl<S: StateId, E: EventId> PartialEq for Transition<S, E> {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source && self.target == other.target && self.event == other.event
+    }
+}
+
+pub struct TransitionBuilder<S: StateId, E: EventId> {
     source: Option<State<S>>,
     target: Option<State<S>>,
     event: Option<E>,
@@ -82,15 +100,16 @@ pub struct TransitionBuilder<S: PartialEq + Debug + Clone, E: PartialEq> {
     guard: Option<Guard<S, E>>,
 }
 
-impl<S: PartialEq + Debug + Clone, E: PartialEq> TransitionBuilder<S, E> {
+impl<S: StateId, E: EventId> TransitionBuilder<S, E> {
     pub fn build(&mut self) -> Transition<S, E> {
-        Transition::new(
+        let tran = Transition::new(
             self.source.take().expect("source state absent!"),
-            self.target.take().expect("target state absent!"),
+            self.target.take().expect("source state absent!"),
             self.event.take().expect("event absent"),
             self.action.take(),
             self.guard.take(),
-        )
+        );
+        tran
     }
     pub fn guard(&mut self, guard: Option<Guard<S, E>>) -> &mut Self {
         self.source.as_ref().expect("source absent");
