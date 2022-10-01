@@ -1,13 +1,55 @@
+pub mod listener;
 pub mod msg;
 pub mod state;
 pub mod trans;
-use std::collections::HashMap;
-use std::hash::Hash;
-
 use crate::sm::state::*;
 use crate::sm::trans::*;
+use std::collections::HashMap;
 
+use crate::sm::listener::StateMachineListener;
+use crate::sm::listener::StateMachineNotify;
 use crate::sm::msg::*;
+
+pub enum Stage {
+    EventNotAccept,
+    StateChanged,
+    StateEntry,
+    StateExit,
+    StateMachineErr,
+    StateMachineStart,
+    StateMachineStop,
+    Transition,
+    TransionStart,
+    TransionEnd,
+}
+
+pub struct StateContext<'a, S: StateId, E: EventId> {
+    stage: Stage,
+    message: &'a Message<E>,
+    tran: &'a Transition<S, E>,
+}
+
+impl<'a, S: StateId, E: EventId> StateContext<'a, S, E> {
+    pub fn new(
+        stage: Stage,
+        tran: &'a Transition<S, E>,
+        message: &'a Message<E>,
+    ) -> StateContext<'a, S, E> {
+        StateContext {
+            stage,
+            tran,
+            message,
+        }
+    }
+
+    pub fn tran(&self) -> &Transition<S, E> {
+        self.tran
+    }
+
+    pub fn message(&self) -> &Message<E> {
+        self.message
+    }
+}
 
 struct StateMachine<S: StateId, E: EventId> {
     init: State<S>,
@@ -15,9 +57,18 @@ struct StateMachine<S: StateId, E: EventId> {
     current: State<S>,
     err: Option<String>,
     event_trans: HashMap<E, Vec<Transition<S, E>>>,
+    notify: StateMachineNotify<S, E>,
 }
 
 impl<S: StateId, E: EventId> StateMachine<S, E> {
+    fn notify_transition(&self, tran: &Transition<S, E>) {
+        self.notify.notify_transition(tran)
+    }
+
+    fn add_listener(&mut self, listener: Box<dyn StateMachineListener<S, E>>) {
+        self.notify.addListener(listener);
+    }
+
     fn all_trans(&self) -> Vec<&Transition<S, E>> {
         self.event_trans
             .values()
@@ -54,14 +105,17 @@ impl<S: StateId, E: EventId> StateMachine<S, E> {
         }
         let event_trans = self.event_trans.get(message.get_payload());
         if let None = event_trans {
-            println!("trans emtpy,event: {:?} not accept!", message.get_payload());
+            println!(
+                "trans emtpy, event: {:?} not accept!",
+                message.get_payload()
+            );
             return false;
         }
         let mut rs = false;
         for tran in event_trans.unwrap().iter() {
             if tran.source().eq(&self.current) {
                 let mut err_msg = None;
-                let state_ctx = StateContext::new(tran, message);
+                let state_ctx = StateContext::new(Stage::Transition, tran, message);
                 rs = tran.transit(&state_ctx).unwrap_or_else(|err| {
                     eprintln!(
                         "state machine trans: source: {:?}, event: {:?}, err: {}",
@@ -82,6 +136,7 @@ impl<S: StateId, E: EventId> StateMachine<S, E> {
                 }
                 if let Some(act) = tran.action() {
                     act(&state_ctx).unwrap();
+                    self.notify_transition(tran)
                 }
                 self.current = tran.target().clone();
                 break;
@@ -104,6 +159,7 @@ impl<S: StateId, E: EventId> StateMachine<S, E> {
             current: init,
             err: None,
             event_trans,
+            notify: StateMachineNotify::new(),
         }
     }
 }
@@ -348,8 +404,27 @@ mod tests {
         Ok(())
     }
 
+    struct PaymentStateMachineListener {}
+
+    impl PaymentStateMachineListener {
+        fn new() -> PaymentStateMachineListener {
+            PaymentStateMachineListener {}
+        }
+    }
+
+    impl StateMachineListener<OrderState, OrderEvent> for PaymentStateMachineListener {
+        fn transion(&self, tran: &Transition<OrderState, OrderEvent>) {
+            println!(
+                "listener sm tran: s: {:?}, t: {:?}, e: {:?}",
+                tran.source(),
+                tran.target(),
+                tran.event()
+            )
+        }
+    }
+
     fn init_sm<S, E>() -> StateMachine<OrderState, OrderEvent> {
-        StateMachineBuilder::new()
+        let mut sm = StateMachineBuilder::new()
             .config()
             .init(State::new(OrderState::I))
             .trans()
@@ -378,7 +453,9 @@ mod tests {
             .guard(None)
             .done()
             .end(State::new(OrderState::S))
-            .build()
+            .build();
+        sm.add_listener(Box::new(PaymentStateMachineListener::new()));
+        sm
     }
 
     #[test]

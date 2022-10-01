@@ -1,27 +1,9 @@
 use std::fmt::Debug;
 
 use crate::sm::msg::EventId;
-use crate::sm::msg::Message;
 use crate::sm::state::State;
 use crate::sm::state::StateId;
-pub struct StateContext<'a, S: StateId, E: EventId> {
-    message: &'a Message<E>,
-    tran: &'a Transition<S, E>,
-}
-
-impl<'a, S: StateId, E: EventId> StateContext<'a, S, E> {
-    pub fn new(tran: &'a Transition<S, E>, message: &'a Message<E>) -> StateContext<'a, S, E> {
-        StateContext { tran, message }
-    }
-
-    pub fn tran(&self) -> &Transition<S, E> {
-        self.tran
-    }
-
-    pub fn message(&self) -> &Message<E> {
-        self.message
-    }
-}
+use crate::sm::StateContext;
 
 pub type Action<S, E> = fn(ctx: &StateContext<S, E>) -> Result<(), &'static str>;
 
